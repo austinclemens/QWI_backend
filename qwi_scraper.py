@@ -11,10 +11,8 @@ from StringIO import StringIO
 
 # base_url and state list control url formation. Shouldn't be necessary to change these
 # unless the server address changes or something crazy happens.
-global base_url
 base_url='http://lehd.ces.census.gov/pub/'
 
-global_states
 # states = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
 states= ['AL']
 
@@ -32,7 +30,7 @@ def get_changedates():
 		pass
 
 
-def scrape_base(states=states,base_url=base_url):
+def scrape_base():
 	# Find the docs - these are in state files and we only need to find them once. Sometimes states
 	# are not present, hence the try block. Break as soon as we find what we need.
 	directory_finder=re.compile('<img src="/icons/folder\.gif" alt="\[DIR\]"></td><td><a href="(.*?)">')
@@ -153,7 +151,7 @@ def upload_data(data):
 	cnx.close()
 
 
-def create_tables(column_file):
+def create_tables(column_defs):
 	# Drop the existing SQL table and create a new one based on the columns file. I set it up
 	# this way so that if the data changes - and specifically if new columns are added - that can
 	# be automatically accomodated by the tables. Not sure there's any point to just dropping the
