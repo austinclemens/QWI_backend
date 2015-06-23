@@ -1,7 +1,7 @@
 import urllib2
 import re
 import string
-import MySQLdb
+import mysql.connector
 import gzip
 import csv
 from StringIO import StringIO
@@ -66,15 +66,104 @@ def scrape_base():
 			# rejoins the label.
 			for column_def in column_defs:
 				final_def=[column_def[0:14].strip(),column_def[14:29].strip(),column_def[29:37].strip(),column_def[37:]]
-			
-			# 
+				final_defs.append(final_def)
+
+			# Now the label files. Set these up as a dict, where keys are variable (column) names
+			# and values are lists of [value, label].
+			master_label_dict={}
 			label_files=label_finder.findall(page)
 
+			for label in label_files:
+				url=dir_url+label
+				label_file=urllib2.urlopen(url)
+				label_file=csv.reader(label_file)
+				label_file=[row for row in label_file]
+				dict[label_file[0][0]]=label_file[1:]
+
+			# Once one good state has been found, this loop can break - files should be the same
+			# for all states.
+			break
 
 		except:
 			pass
 
-	# Finally, populate the SQL database with master_csv.
+	# Next, drop the existing SQL table and create a new one based on the columns file. I set it up
+	# this way so that if the data changes - and specifically if new columns are added - that can
+	# be automatically accomodated by the tables. Not sure there's any point to just dropping the
+	# rows... a new index has to be created either way.
+
+	# There are tradeoffs here between simplicity and speed. The code below creates a separate
+	# table for each geography. This will make queries a bit faster (and maybe indexing?) but if
+	# more than one geography is desired a join will be necessary.
+
+	# The geo levels are:
+	#	C = 'Counties'
+	#	M = 'Metropolitan/Micropolitan'
+	#	N = 'National (50 States + DC)'
+	#	S = 'States'
+	#	W = 'Workforce Investment Areas'
+
+	# Set up strings to create tables, specifying the variable name, type, and length.
+	table_string=''
+	for column in column_defs:
+		if column[1]=='C':
+			type='varchar(10)'
+		if column[1]=='N':
+			type='int(11)'
+
+		table_string=table_string+("`"+column[0]+"` "+type+" NOT NULL,")
+
+	# Set up the variable string for the insert statement below (just column names separated
+	# by commas), and the insert string (same thing but for python insert operators)
+	variable_string=''
+	for column in column_defs:
+		variable_string=variable_string+column[0]+', '
+	variable_string=variable_string[0:-2]
+	insert_string="%s, "*len(column_defs)
+	insert_string=insert_string[0:-2]
+
+	# The actual table creation statements.
+	tables={}
+	tables['counties'] = ("CREATE TABLE IF NOT EXISTS `counties` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
+	tables['metro_micro'] = ("CREATE TABLE IF NOT EXISTS `metro_micro` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
+	tables['national'] = ("CREATE TABLE IF NOT EXISTS `national` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
+	tables['states'] = ("CREATE TABLE IF NOT EXISTS `states` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
+	tables['workforce'] = ("CREATE TABLE IF NOT EXISTS `workforce` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
+
+	# Open a connection, drop existing tables and create new ones.
+	cnx=mysql.connector.connect(user='test', password='test', host='127.0.0.1', database='QWI')
+	cursor=cnx.cursor()
+
+	cursor.execute("DROP TABLE `counties`")
+	cursor.execute("DROP TABLE `metro_micro`")
+	cursor.execute("DROP TABLE `national`")
+	cursor.execute("DROP TABLE `states`")
+	cursor.execute("DROP TABLE `workforce`")
+
+	for table in tables.keys():
+		cursor.execute(tables[table])
+
+	# Next ready the datasets - assign rows from master_csv to a list for each geographic type.
+	counties=[row for row in master_csv if row[2]=='C']
+	metro_micro=[row for row in master_csv if row[2]=='M']
+	national=[row for row in master_csv if row[2]=='N']
+	states=[row for row in master_csv if row[2]=='S']
+	workforce=[row for row in master_csv if row[2]=='W']
+
+	counties_insert="INSERT INTO counties (%s) VALUES (%s)" % (variable_string,insert_string)
+	counties_insert="INSERT INTO metro_micro (%s) VALUES (%s)" % (variable_string,insert_string)
+	counties_insert="INSERT INTO national (%s) VALUES (%s)" % (variable_string,insert_string)
+	counties_insert="INSERT INTO states (%s) VALUES (%s)" % (variable_string,insert_string)
+	counties_insert="INSERT INTO workforce (%s) VALUES (%s)" % (variable_string,insert_string)
+
+	cursor.executemany(counties_insert,counties)
+	cursor.executemany(metromicro_insert,metro_micro)
+	cursor.executemany(national_insert,national)
+	cursor.executemany(states_insert,states)
+	cursor.executemany(workforce_insert,workforce)
+
+	cursor.close()
+	cnx.close()
 
 
 def scrape_state(state):
