@@ -4,16 +4,16 @@ import string
 import mysql.connector
 import gzip
 import csv
+import gc
+import multiprocessing
+from joblib import Parallel, delayed
 from StringIO import StringIO
 
 # base_url and state list control url formation. Shouldn't be necessary to change these
 # unless the server address changes or something crazy happens.
 base_url='http://lehd.ces.census.gov/pub/'
-states = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DC", "DE", "FL", "GA", 
-          "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", 
-          "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", 
-          "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", 
-          "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
+# states = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
+states= ['AL']
 
 
 def get_changedates():
@@ -27,26 +27,13 @@ def get_changedates():
 		pass
 
 
-def scrape_base():
-	# Iterrate through states. Each state directory is the base URL + lowercase state abrev
-	# Always takes the 'latest_release' directory. This step gets the basic data.
-	master_csv=[]
-
-	for state in states:
-		state_data=scrape_state(state)
-
-		for row in state_data:
-			master_csv.append(row)
-
-	# The next step is to drop any existing SQL table and create a new one from scratch. This
-	# allows the db to adapt to any changes made to the dataset. The Census provides column
-	# names and coding for each variable.
+def scrape_base(states=states,base_url=base_url):
+	# Find the docs - these are in state files and we only need to find them once. Sometimes states
+	# are not present, hence the try block. Break as soon as we find what we need.
 	directory_finder=re.compile('<img src="/icons/folder\.gif" alt="\[DIR\]"></td><td><a href="(.*?)">')
 	codebook_finder=re.compile('<a href="(.*?\.csv\.gz)">')
 	label_finder=re.compile('<a href="(label_.*?\.csv)">')
 
-	# Find the docs - these are in state files and we only need to find them once. Sometimes states
-	# are not present, hence the try block. Break as soon as we find what we need.
 	for state in states:
 		try:
 			url=base_url+state.lower()+'/latest_release/'
@@ -87,7 +74,81 @@ def scrape_base():
 		except:
 			pass
 
-	# Next, drop the existing SQL table and create a new one based on the columns file. I set it up
+	# Create SQL tables using the column definitions from the text file.
+	create_tables(column_defs)
+
+	# Iterrate through states. Each state directory is the base URL + lowercase state abrev
+	# Always takes the 'latest_release' directory. This step gets the basic data.
+	directory_finder=re.compile('<img src="/icons/folder\.gif" alt="\[DIR\]"></td><td><a href="(.*?)">')
+	data_finder=re.compile('<a href="(.*?.csv.gz)">')
+
+	for state in states:
+		try:
+			url=base_url+state.lower()+'/latest_release/'
+			page=urllib2.urlopen(url).read()
+			directories=directory_finder.findall(page)
+		except:
+			print 'Data does not exist for %s' % state
+			directories=[]
+
+		for dir in directories:
+			dir_url=url+dir
+			dir_page=urllib2.urlopen(dir_url).read()
+			data_paths=data_finder.findall(dir_page)
+			data_paths=[dir_url+dir_page for dir_page in data_paths]
+
+			num_cores=multiprocessing.cpu_count()
+			Parallel(n_jobs=num_cores)(delayed(get_file)(data_url) for data_url in data_paths)
+
+
+def get_file(data_url):
+	data=[]
+	
+	try:
+		dataset=StringIO(urllib2.urlopen(data_url).read())
+		dataset=gzip.GzipFile(fileobj=dataset,mode='rb')
+		dataset=dataset.read()
+		dataset=dataset.split('\n')
+
+		for row in dataset[1:]:
+			data.append(row)
+
+		print data_url+' downloaded'
+
+		upload_data(data)
+		print data_url+' uploaded to SQL'
+
+
+def upload_data(data):
+	# This function sends data from a single file to the appropriate tables according to
+	# geographic area.
+	cnx=mysql.connector.connect(user='test', password='test', host='127.0.0.1', database='QWI')
+	cursor=cnx.cursor()
+
+	counties=[row for row in data if row[2]=='C']
+	metro_micro=[row for row in data if row[2]=='M']
+	national=[row for row in data if row[2]=='N']
+	states=[row for row in data if row[2]=='S']
+	workforce=[row for row in data if row[2]=='W']
+
+	counties_insert="INSERT INTO counties (%s) VALUES (%s)" % (variable_string,insert_string)
+	counties_insert="INSERT INTO metro_micro (%s) VALUES (%s)" % (variable_string,insert_string)
+	counties_insert="INSERT INTO national (%s) VALUES (%s)" % (variable_string,insert_string)
+	counties_insert="INSERT INTO states (%s) VALUES (%s)" % (variable_string,insert_string)
+	counties_insert="INSERT INTO workforce (%s) VALUES (%s)" % (variable_string,insert_string)
+
+	cursor.executemany(counties_insert,counties)
+	cursor.executemany(metromicro_insert,metro_micro)
+	cursor.executemany(national_insert,national)
+	cursor.executemany(states_insert,states)
+	cursor.executemany(workforce_insert,workforce)
+
+	cursor.close()
+	cnx.close()
+
+
+def create_tables(column_file):
+	# Drop the existing SQL table and create a new one based on the columns file. I set it up
 	# this way so that if the data changes - and specifically if new columns are added - that can
 	# be automatically accomodated by the tables. Not sure there's any point to just dropping the
 	# rows... a new index has to be created either way.
@@ -143,61 +204,11 @@ def scrape_base():
 	for table in tables.keys():
 		cursor.execute(tables[table])
 
-	# Next ready the datasets - assign rows from master_csv to a list for each geographic type.
-	counties=[row for row in master_csv if row[2]=='C']
-	metro_micro=[row for row in master_csv if row[2]=='M']
-	national=[row for row in master_csv if row[2]=='N']
-	states=[row for row in master_csv if row[2]=='S']
-	workforce=[row for row in master_csv if row[2]=='W']
-
-	counties_insert="INSERT INTO counties (%s) VALUES (%s)" % (variable_string,insert_string)
-	counties_insert="INSERT INTO metro_micro (%s) VALUES (%s)" % (variable_string,insert_string)
-	counties_insert="INSERT INTO national (%s) VALUES (%s)" % (variable_string,insert_string)
-	counties_insert="INSERT INTO states (%s) VALUES (%s)" % (variable_string,insert_string)
-	counties_insert="INSERT INTO workforce (%s) VALUES (%s)" % (variable_string,insert_string)
-
-	cursor.executemany(counties_insert,counties)
-	cursor.executemany(metromicro_insert,metro_micro)
-	cursor.executemany(national_insert,national)
-	cursor.executemany(states_insert,states)
-	cursor.executemany(workforce_insert,workforce)
-
 	cursor.close()
 	cnx.close()
 
 
-def scrape_state(state):
-	# Passes in a base URL for a state. Returns a list of all data for the state.
-	directory_finder=re.compile('<img src="/icons/folder\.gif" alt="\[DIR\]"></td><td><a href="(.*?)">')
-	data_finder=re.compile('<a href="(.*?.csv.gz)">')
 
-	try:
-		url=base_url+state.lower()+'/latest_release/'
-		page=urllib2.urlopen(url).read()
-		directories=directory_finder.findall(page)
-	except:
-		print 'Data does not exist for %s' % state
-		directories=[]
-
-	data=[]
-
-	for dir in directories:
-		dir_url=url+dir
-		dir_page=urllib2.urlopen(dir_url).read()
-		data_paths=data_finder.findall(dir_page)
-
-		for dir_page in data_paths:
-			data_url=dir_url+dir_page
-
-			dataset=StringIO(urllib2.urlopen(dir_url).read())
-			dataset=gzip.GzipFile(fileobj=dataset,mode='rb')
-			dataset=dataset.read()
-			dataset=dataset.split('\n')
-
-			for row in dataset[1:]:
-				data.append(row)
-
-	return data
 
 
 
