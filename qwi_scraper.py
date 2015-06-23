@@ -11,9 +11,14 @@ from StringIO import StringIO
 
 # base_url and state list control url formation. Shouldn't be necessary to change these
 # unless the server address changes or something crazy happens.
+global base_url
 base_url='http://lehd.ces.census.gov/pub/'
+
+global_states
 # states = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
 states= ['AL']
+
+SQL_dict={'user':'test','pass':'test'}
 
 
 def get_changedates():
@@ -44,6 +49,7 @@ def scrape_base(states=states,base_url=base_url):
 			column_defs_url=dir_url+'column_definitions.txt'
 			column_defs=urllib2.urlopen(column_defs_url).read()
 			column_defs=column_defs.split('\n')
+			print column_defs
 			final_defs=[]
 
 			# If labeling is broken, this is a prime candidate. The values below are based on the
@@ -52,8 +58,9 @@ def scrape_base(states=states,base_url=base_url):
 			# be made robust to such changes - a method that uses .split, drops spaces, and then 
 			# rejoins the label.
 			for column_def in column_defs:
-				final_def=[column_def[0:14].strip(),column_def[14:29].strip(),column_def[29:37].strip(),column_def[37:]]
-				final_defs.append(final_def)
+				if column_def[14:29].strip()=='C' or column_def[14:29].strip()=='N':
+					final_def=[column_def[0:14].strip(),column_def[14:29].strip(),column_def[29:37].strip(),column_def[37:]]
+					final_defs.append(final_def)
 
 			# Now the label files. Set these up as a dict, where keys are variable (column) names
 			# and values are lists of [value, label].
@@ -75,7 +82,7 @@ def scrape_base(states=states,base_url=base_url):
 			pass
 
 	# Create SQL tables using the column definitions from the text file.
-	create_tables(column_defs)
+	create_tables(final_defs)
 
 	# Iterrate through states. Each state directory is the base URL + lowercase state abrev
 	# Always takes the 'latest_release' directory. This step gets the basic data.
@@ -104,25 +111,24 @@ def scrape_base(states=states,base_url=base_url):
 def get_file(data_url):
 	data=[]
 	
-	try:
-		dataset=StringIO(urllib2.urlopen(data_url).read())
-		dataset=gzip.GzipFile(fileobj=dataset,mode='rb')
-		dataset=dataset.read()
-		dataset=dataset.split('\n')
+	dataset=StringIO(urllib2.urlopen(data_url).read())
+	dataset=gzip.GzipFile(fileobj=dataset,mode='rb')
+	dataset=dataset.read()
+	dataset=dataset.split('\n')
 
-		for row in dataset[1:]:
-			data.append(row)
+	for row in dataset[1:]:
+		data.append(row)
 
-		print data_url+' downloaded'
+	print data_url+' downloaded'
 
-		upload_data(data)
-		print data_url+' uploaded to SQL'
+	upload_data(data)
+	print data_url+' uploaded to SQL'
 
 
 def upload_data(data):
 	# This function sends data from a single file to the appropriate tables according to
 	# geographic area.
-	cnx=mysql.connector.connect(user='test', password='test', host='127.0.0.1', database='QWI')
+	cnx=mysql.connector.connect(user=SQL_dict['user'], password=SQL_dict['pass'], host='127.0.0.1', database='QWI')
 	cursor=cnx.cursor()
 
 	counties=[row for row in data if row[2]=='C']
@@ -192,7 +198,7 @@ def create_tables(column_file):
 	tables['workforce'] = ("CREATE TABLE IF NOT EXISTS `workforce` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
 
 	# Open a connection, drop existing tables and create new ones.
-	cnx=mysql.connector.connect(user='test', password='test', host='127.0.0.1', database='QWI')
+	cnx=mysql.connector.connect(user=SQL_dict['user'], password=SQL_dict['pass'], host='127.0.0.1', database='QWI')
 	cursor=cnx.cursor()
 
 	cursor.execute("DROP TABLE `counties`")
