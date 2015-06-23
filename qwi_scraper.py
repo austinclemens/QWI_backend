@@ -42,16 +42,39 @@ def scrape_base():
 	# allows the db to adapt to any changes made to the dataset. The Census provides column
 	# names and coding for each variable.
 	directory_finder=re.compile('<img src="/icons/folder\.gif" alt="\[DIR\]"></td><td><a href="(.*?)">')
-	codebook_finder=re.compile('<a href="(.*?.csv.gz)">')
+	codebook_finder=re.compile('<a href="(.*?\.csv\.gz)">')
+	label_finder=re.compile('<a href="(label_.*?\.csv)">')
 
+	# Find the docs - these are in state files and we only need to find them once. Sometimes states
+	# are not present, hence the try block. Break as soon as we find what we need.
 	for state in states:
 		try:
 			url=base_url+state.lower()+'/latest_release/'
 			page=urllib2.urlopen(url).read()
 			directories=directory_finder.findall(page)
+
+			dir_url=url+directories[0]
+			column_defs_url=dir_url+'column_definitions.txt'
+			column_defs=urllib2.urlopen(column_defs_url).read()
+			column_defs=column_defs.split('\n')
+			final_defs=[]
+
+			# If labeling is broken, this is a prime candidate. The values below are based on the
+			# fixed widths in a current column_definitions.txt file. If the widths in that file were
+			# to change it would affect labelling and possibly SQL table creation. This could maaaybe
+			# be made robust to such changes - a method that uses .split, drops spaces, and then 
+			# rejoins the label.
+			for column_def in column_defs:
+				final_def=[column_def[0:14].strip(),column_def[14:29].strip(),column_def[29:37].strip(),column_def[37:]]
 			
+			# 
+			label_files=label_finder.findall(page)
+
+
 		except:
 			pass
+
+	# Finally, populate the SQL database with master_csv.
 
 
 def scrape_state(state):
