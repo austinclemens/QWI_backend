@@ -108,7 +108,7 @@ def scrape_base():
 			data_paths=data_finder.findall(dir_page)
 			data_paths=[dir_url+dir_page for dir_page in data_paths]
 
-			num_cores=4
+			num_cores=1
 			# num_cores=multiprocessing.cpu_count()
 			Parallel(n_jobs=num_cores)(delayed(get_file)(data_url,variable_string,insert_string) for data_url in data_paths)
 
@@ -122,7 +122,7 @@ def get_file(data_url,variable_string,insert_string):
 	dataset=dataset.split('\n')
 
 	for row in dataset[1:]:
-		data.append(row)
+		data.append(row.split(','))
 
 	print data_url+' downloaded'
 
@@ -137,23 +137,27 @@ def upload_data(data,variable_string,insert_string):
 	cnx=mysql.connector.connect(user=SQL_dict['user'], password=SQL_dict['pass'], host='127.0.0.1', database='QWI')
 	cursor=cnx.cursor()
 
+	insert_dict={}
+
 	counties=[row for row in data if row[2]=='C']
 	metro_micro=[row for row in data if row[2]=='M']
 	national=[row for row in data if row[2]=='N']
 	states=[row for row in data if row[2]=='S']
 	workforce=[row for row in data if row[2]=='W']
 
-	counties_insert="INSERT INTO counties (%s) VALUES (%s)" % (variable_string,insert_string)
-	counties_insert="INSERT INTO metro_micro (%s) VALUES (%s)" % (variable_string,insert_string)
-	counties_insert="INSERT INTO national (%s) VALUES (%s)" % (variable_string,insert_string)
-	counties_insert="INSERT INTO states (%s) VALUES (%s)" % (variable_string,insert_string)
-	counties_insert="INSERT INTO workforce (%s) VALUES (%s)" % (variable_string,insert_string)
+	insert_dict['C']="INSERT INTO counties (%s) VALUES (%s)" % (variable_string,insert_string)
+	insert_dict['M']="INSERT INTO metro_micro (%s) VALUES (%s)" % (variable_string,insert_string)
+	insert_dict['N']="INSERT INTO national (%s) VALUES (%s)" % (variable_string,insert_string)
+	insert_dict['S']="INSERT INTO states (%s) VALUES (%s)" % (variable_string,insert_string)
+	insert_dict['W']="INSERT INTO workforce (%s) VALUES (%s)" % (variable_string,insert_string)
 
-	cursor.executemany(counties_insert,counties)
-	cursor.executemany(metromicro_insert,metro_micro)
-	cursor.executemany(national_insert,national)
-	cursor.executemany(states_insert,states)
-	cursor.executemany(workforce_insert,workforce)
+	print len(data)+"rows to insert"
+	index=0
+
+	for row in data:
+		cursor.execute(insert_dict[row[2]],row)
+		index=index+1
+		print '\r'+str(index),
 
 	gc.collect()
 	cursor.close()
@@ -185,7 +189,8 @@ def create_tables(column_defs):
 		if column[1]=='N':
 			type='int(11)'
 
-		table_string=table_string+("`"+column[0]+"` "+type+" NOT NULL,")
+		table_string=table_string+("`"+column[0]+"` "+type+",")
+	table_string=table_string[0:-1]
 
 	# Set up the variable string for the insert statement below (just column names separated
 	# by commas), and the insert string (same thing but for python insert operators)
@@ -198,11 +203,11 @@ def create_tables(column_defs):
 
 	# The actual table creation statements.
 	tables={}
-	tables['counties'] = ("CREATE TABLE IF NOT EXISTS `counties` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
-	tables['metro_micro'] = ("CREATE TABLE IF NOT EXISTS `metro_micro` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
-	tables['national'] = ("CREATE TABLE IF NOT EXISTS `national` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
-	tables['states'] = ("CREATE TABLE IF NOT EXISTS `states` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
-	tables['workforce'] = ("CREATE TABLE IF NOT EXISTS `workforce` ("+table_string+"PRIMARY KEY(year, quarter, geography, sex, agegrp, industry, ind_level, race, ethnicity, education, firmage, firmsize), KEY `date` (year,quarter)) ENGINE=InnoDB;")
+	tables['counties'] = ("CREATE TABLE IF NOT EXISTS `counties` ("+table_string+") ENGINE=InnoDB;")
+	tables['metro_micro'] = ("CREATE TABLE IF NOT EXISTS `metro_micro` ("+table_string+") ENGINE=InnoDB;")
+	tables['national'] = ("CREATE TABLE IF NOT EXISTS `national` ("+table_string+") ENGINE=InnoDB;")
+	tables['states'] = ("CREATE TABLE IF NOT EXISTS `states` ("+table_string+") ENGINE=InnoDB;")
+	tables['workforce'] = ("CREATE TABLE IF NOT EXISTS `workforce` ("+table_string+") ENGINE=InnoDB;")
 
 	# Open a connection, drop existing tables and create new ones.
 	cnx=mysql.connector.connect(user=SQL_dict['user'], password=SQL_dict['pass'], host='127.0.0.1', database='QWI')
