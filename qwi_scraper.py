@@ -12,10 +12,8 @@ from StringIO import StringIO
 # base_url and state list control url formation. Shouldn't be necessary to change these
 # unless the server address changes or something crazy happens.
 base_url='http://lehd.ces.census.gov/pub/'
-
 # states = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
 states= ['AL']
-
 SQL_dict={'user':'test','pass':'test'}
 
 
@@ -47,7 +45,6 @@ def scrape_base():
 			column_defs_url=dir_url+'column_definitions.txt'
 			column_defs=urllib2.urlopen(column_defs_url).read()
 			column_defs=column_defs.split('\n')
-			print column_defs
 			final_defs=[]
 
 			# If labeling is broken, this is a prime candidate. The values below are based on the
@@ -82,6 +79,15 @@ def scrape_base():
 	# Create SQL tables using the column definitions from the text file.
 	create_tables(final_defs)
 
+	# Set up the variable string for the insert statement below (just column names separated
+	# by commas), and the insert string (same thing but for python insert operators)
+	variable_string=''
+	for column in final_defs:
+		variable_string=variable_string+column[0]+', '
+	variable_string=variable_string[0:-2]
+	insert_string="%s, "*len(final_defs)
+	insert_string=insert_string[0:-2]
+
 	# Iterrate through states. Each state directory is the base URL + lowercase state abrev
 	# Always takes the 'latest_release' directory. This step gets the basic data.
 	directory_finder=re.compile('<img src="/icons/folder\.gif" alt="\[DIR\]"></td><td><a href="(.*?)">')
@@ -102,11 +108,12 @@ def scrape_base():
 			data_paths=data_finder.findall(dir_page)
 			data_paths=[dir_url+dir_page for dir_page in data_paths]
 
-			num_cores=multiprocessing.cpu_count()
-			Parallel(n_jobs=num_cores)(delayed(get_file)(data_url) for data_url in data_paths)
+			num_cores=4
+			# num_cores=multiprocessing.cpu_count()
+			Parallel(n_jobs=num_cores)(delayed(get_file)(data_url,variable_string,insert_string) for data_url in data_paths)
 
 
-def get_file(data_url):
+def get_file(data_url,variable_string,insert_string):
 	data=[]
 	
 	dataset=StringIO(urllib2.urlopen(data_url).read())
@@ -119,11 +126,12 @@ def get_file(data_url):
 
 	print data_url+' downloaded'
 
-	upload_data(data)
+	data=[row for row in data if len(row)>2]
+	upload_data(data,variable_string,insert_string)
 	print data_url+' uploaded to SQL'
 
 
-def upload_data(data):
+def upload_data(data,variable_string,insert_string):
 	# This function sends data from a single file to the appropriate tables according to
 	# geographic area.
 	cnx=mysql.connector.connect(user=SQL_dict['user'], password=SQL_dict['pass'], host='127.0.0.1', database='QWI')
@@ -147,6 +155,7 @@ def upload_data(data):
 	cursor.executemany(states_insert,states)
 	cursor.executemany(workforce_insert,workforce)
 
+	gc.collect()
 	cursor.close()
 	cnx.close()
 
@@ -199,11 +208,13 @@ def create_tables(column_defs):
 	cnx=mysql.connector.connect(user=SQL_dict['user'], password=SQL_dict['pass'], host='127.0.0.1', database='QWI')
 	cursor=cnx.cursor()
 
-	cursor.execute("DROP TABLE `counties`")
-	cursor.execute("DROP TABLE `metro_micro`")
-	cursor.execute("DROP TABLE `national`")
-	cursor.execute("DROP TABLE `states`")
-	cursor.execute("DROP TABLE `workforce`")
+	geos=['counties','metro_micro','national','states','workforce']
+
+	for geo in geos:
+		try:
+			cursor.execute("DROP TABLE `%s`" % (geo))
+		except:
+			pass
 
 	for table in tables.keys():
 		cursor.execute(tables[table])
