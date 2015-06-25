@@ -108,10 +108,12 @@ def scrape_base():
 			data_paths=data_finder.findall(dir_page)
 			data_paths=[dir_url+dir_page for dir_page in data_paths]
 
-			num_cores=1
+			# num_cores=1
 			# num_cores=multiprocessing.cpu_count()
-			Parallel(n_jobs=num_cores)(delayed(get_file)(data_url,variable_string,insert_string) for data_url in data_paths)
+			# Parallel(n_jobs=num_cores)(delayed(get_file)(data_url,variable_string,insert_string) for data_url in data_paths)
 
+			for data_url in data_paths:
+				get_file(data_url,variable_string,insert_string)
 
 def get_file(data_url,variable_string,insert_string):
 	data=[]
@@ -127,35 +129,23 @@ def get_file(data_url,variable_string,insert_string):
 	print data_url+' downloaded'
 
 	data=[row for row in data if len(row)>2]
-	upload_data(data,variable_string,insert_string)
-	print data_url+' uploaded to SQL'
 
-
-def upload_data(data,variable_string,insert_string):
-	# This function sends data from a single file to the appropriate tables according to
-	# geographic area.
 	cnx=mysql.connector.connect(user=SQL_dict['user'], password=SQL_dict['pass'], host='127.0.0.1', database='QWI')
 	cursor=cnx.cursor()
 
 	insert_dict={}
-
-	counties=[row for row in data if row[2]=='C']
-	metro_micro=[row for row in data if row[2]=='M']
-	national=[row for row in data if row[2]=='N']
-	states=[row for row in data if row[2]=='S']
-	workforce=[row for row in data if row[2]=='W']
-
 	insert_dict['C']="INSERT INTO counties (%s) VALUES (%s)" % (variable_string,insert_string)
 	insert_dict['M']="INSERT INTO metro_micro (%s) VALUES (%s)" % (variable_string,insert_string)
 	insert_dict['N']="INSERT INTO national (%s) VALUES (%s)" % (variable_string,insert_string)
 	insert_dict['S']="INSERT INTO states (%s) VALUES (%s)" % (variable_string,insert_string)
 	insert_dict['W']="INSERT INTO workforce (%s) VALUES (%s)" % (variable_string,insert_string)
 
-	print len(data)+"rows to insert"
+	print str(len(data))+" rows to insert"
 	index=0
 
 	for row in data:
 		cursor.execute(insert_dict[row[2]],row)
+		cnx.commit()
 		index=index+1
 		print '\r'+str(index),
 
